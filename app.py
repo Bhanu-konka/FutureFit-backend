@@ -45,5 +45,6 @@ def home():
     return jsonify({"message": "Backend is running!"})
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))  # Use Render's dynamic PORT
+    app.run(host="0.0.0.0", port=port, debug=False)
