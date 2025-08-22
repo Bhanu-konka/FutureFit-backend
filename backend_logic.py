@@ -5,15 +5,9 @@ import google.generativeai as genai
 import PyPDF2
 from typing import List, Dict, Optional
 
-# --- API Keys (prefer env vars, fallback to placeholders you provided) ---
-SERP_API_KEY = os.getenv(
-    "SERPAPI_KEY",
-    "b42209e075a1d19ed3c9cd6eece729a6154b3cc0672b70e0b2b202c4e849a124"
-)
-GEMINI_API_KEY = os.getenv(
-    "GEMINI_API_KEY",
-    "AIzaSyBx3UdqOvdKy09liSo12wV7m9jaXzWQPdQ"
-)
+# --- API Keys (prefer env vars; no secrets in code) ---
+SERP_API_KEY = os.getenv("SERPAPI_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 GOOGLE_JOBS_ENDPOINT = "https://serpapi.com/search.json"
 
@@ -32,13 +26,11 @@ def _pick_best_apply_link(job: Dict) -> str:
             s = 0
             if company and company in link:
                 s += 5
-            # Common ATS / career portals
             for kw in ["careers", "jobs.", "workday", "greenhouse", "lever",
                        "smartrecruiters", "successfactors", "myworkdayjobs",
                        "oraclecloud", "adp", "ashby", "icims", "bamboohr"]:
                 if kw in link:
                     s += 3
-            # De-prioritize aggregators
             for bad in ["indeed.", "linkedin.", "ziprecruiter.", "talent.com",
                         "glassdoor.", "bebee.", "naukri.", "monster."]:
                 if bad in link:
@@ -49,25 +41,26 @@ def _pick_best_apply_link(job: Dict) -> str:
         if best.get("link"):
             return best["link"]
 
-    # Fallbacks
     if job.get("share_link"):
         return job["share_link"]
     return "#"
 
 
-# --- Part 1: Job Scraper Logic ---
 def run_scraper_logic(job_title: str, location: str) -> bool:
     """
     Scrapes jobs from SerpApi (with apply links) for a specific location and saves them to CSV.
     """
+    if not SERP_API_KEY:
+        print("SERPAPI_KEY not set")
+        return False
+
     print(f"Starting scraper for: '{job_title}' in '{location}'")
     all_jobs: List[Dict] = []
 
-    # SerpApi supports both building the query and passing 'location' param.
     params = {
         "engine": "google_jobs",
         "q": f"fresher {job_title} in {location}",
-        "location": location,            # explicit location filter
+        "location": location,
         "api_key": SERP_API_KEY,
         "hl": "en",
     }
@@ -103,17 +96,15 @@ def run_scraper_logic(job_title: str, location: str) -> bool:
             "job_id": job_id,
             "location": job.get("location", "N/A"),
             "description": job.get("description", "N/A"),
-            "share_link": job.get("share_link", ""),          # Google Jobs detail card
-            "apply_link": _pick_best_apply_link(job),         # Best direct apply target
+            "share_link": job.get("share_link", ""),
+            "apply_link": _pick_best_apply_link(job),
         })
 
-    df = pd.DataFrame(processed)
-    df.to_csv("scraped_jobs.csv", index=False)
-    print(f"Scraper finished. Saved {len(df)} jobs to scraped_jobs.csv")
+    pd.DataFrame(processed).to_csv("scraped_jobs.csv", index=False)
+    print(f"Scraper finished. Saved {len(processed)} jobs to scraped_jobs.csv")
     return True
 
 
-# --- Part 2: Resume Analyzer Logic ---
 def extract_text_from_pdf(pdf_path: str) -> Optional[str]:
     try:
         with open(pdf_path, "rb") as f:
@@ -132,7 +123,10 @@ def run_analyzer_logic(resume_path: str, jobs_csv_path: str) -> List[Dict]:
     """Generates tailored cover letters and returns jobs + links."""
     print("Starting analyzer...")
 
-    # Gemini init
+    if not GEMINI_API_KEY:
+        print("GEMINI_API_KEY not set")
+        return []
+
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel("gemini-1.5-flash-latest")
@@ -152,7 +146,6 @@ def run_analyzer_logic(resume_path: str, jobs_csv_path: str) -> List[Dict]:
 
     matched_jobs: List[Dict] = []
 
-    # Limit to 5 to keep it quick
     for idx, job in jobs_df.head(5).iterrows():
         print(f"Analyzing job {idx + 1}/{len(jobs_df.head(5))}: {job['title']}...")
 
@@ -173,7 +166,6 @@ JOB DESCRIPTION:
 
             apply_link = job.get("apply_link") or ""
             if not apply_link or apply_link == "#":
-                # Last-resort fallback: open Google Jobs card if we have job_id/share_link
                 if isinstance(job.get("share_link"), str) and job["share_link"]:
                     apply_link = job["share_link"]
                 elif isinstance(job.get("job_id"), str) and job["job_id"]:
